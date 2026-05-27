@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- BACKGROUND -->
+    <div class="noise"></div>
+    <div class="orb orb1"></div>
+    <div class="orb orb2"></div>
+    <div class="orb orb3"></div>
+
+    <div class="container">
+
+        <!-- HEADER -->
+        <header>
+            <div class="badge">
+                <span class="dot"></span> MOVIE REVIEWER
+            </div>
+            <h1>Movie Review<br><em>Analyzer</em></h1>
+            <p class="subtitle">Powered by GNG</p>
+        </header>
+
+        
+        <div class="card">
+            <div class="input-group">
+                <label>🎬 Movie Name</label>
+                <input type="text" id="movieName" placeholder="e.g. Inception, Interstellar..."/>
+            </div>
+
+            <div class="input-group">
+                <label>✍️ Your Review</label>
+                <div class="textarea-wrapper">
+                    <textarea id="reviewInput" rows="5"
+                        placeholder="e.g. This movie was absolutely incredible, the acting was phenomenal..."></textarea>
+                    <span class="char-count" id="charCount">0 / 500</span>
+                </div>
+            </div>
+
+            <button id="analyzeBtn" onclick="analyzeSentiment()">
+                <span class="btn-text">Analyze Sentiment</span>
+                <span class="btn-loader" style="display:none">
+                    <span class="spinner"></span> Analyzing...
+                </span>
+            </button>
+        </div>
+
+        <div class="result-card" id="resultCard">
+            <div class="result-inner">
+                <div class="result-movie" id="resultMovie"></div>
+                <div class="result-emoji"  id="resultEmoji"></div>
+                <div class="result-label"  id="resultLabel"></div>
+                <div class="confidence-bar-wrap">
+                    <div class="confidence-bar" id="confidenceBar"></div>
+                </div>
+                <div class="result-confidence" id="resultConfidence"></div>
+            </div>
+        </div>
+
+        <!-- HISTORY-->
+        <div class="history-panel" id="historyPanel" style="display:none">
+            <div class="history-header">
+                <span class="history-title">Recent Reviews</span>
+                <button class="clear-btn" onclick="clearHistory()">Clear</button>
+            </div>
+            <div class="history-scroll" id="historyScroll">
+                
+            </div>
+        </div>
+
+        <footer>
+            <p>Built with PyTorch + HuggingFace · Press <kbd>Ctrl+Enter</kbd> to analyze</p>
+        </footer>
+
+    </div>
+
+    <script>
+        const reviewHistory = [];
+
+        
+        const textarea  = document.getElementById('reviewInput');
+        const charCount = document.getElementById('charCount');
+        textarea.addEventListener('input', () => {
+            const len = textarea.value.length;
+            charCount.textContent = `${len} / 500`;
+            charCount.style.color = len > 450 ? '#ff6b6b' : '';
+        });
+
+        
+        function renderHistory() {
+            const panel  = document.getElementById('historyPanel');
+            const scroll = document.getElementById('historyScroll');
+
+            if (reviewHistory.length === 0) {
+                panel.style.display = 'none';
+                return;
+            }
+
+            panel.style.display = 'block';
+            scroll.innerHTML = reviewHistory.map((item, i) => `
+                <div class="history-item" style="animation-delay:${i * 0.05}s">
+                    <div class="history-left">
+                        <div class="history-movie">${item.movie}</div>
+                        <div class="history-text">${item.text}</div>
+                    </div>
+                    <div class="history-right">
+                        <span class="history-badge ${item.isPositive ? 'pos' : 'neg'}">
+                            ${item.isPositive ? '😊' : '😞'} ${item.isPositive ? 'Positive' : 'Negative'}
+                        </span>
+                        <span class="history-conf">${item.confidence}%</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // ---- Clear history ----
+        function clearHistory() {
+            reviewHistory.length = 0;
+            renderHistory();
+        }
+
+        function animateBar(confidence, isPositive) {
+            const bar = document.getElementById('confidenceBar');
+            bar.style.width = '0%';
+            bar.style.background = isPositive
+                ? 'linear-gradient(90deg, #2ecc71, #27ae60)'
+                : 'linear-gradient(90deg, #e74c3c, #c0392b)';
+            setTimeout(() => { bar.style.width = confidence + '%'; }, 50);
+        }
+
+        async function analyzeSentiment() {
+            const text      = document.getElementById('reviewInput').value.trim();
+            const movieName = document.getElementById('movieName').value.trim();
+
+            if (!text) {
+                document.getElementById('reviewInput').classList.add('shake');
+                setTimeout(() => document.getElementById('reviewInput').classList.remove('shake'), 500);
+                return;
+            }
+
+            const btn = document.getElementById('analyzeBtn');
+            btn.querySelector('.btn-text').style.display   = 'none';
+            btn.querySelector('.btn-loader').style.display = 'flex';
+            btn.disabled = true;
+
+            const resultCard = document.getElementById('resultCard');
+            resultCard.classList.remove('show', 'positive', 'negative');
+
+            try {
+                const response = await fetch('/predict', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ text })
+                });
+
+                const data       = await response.json();
+                const isPositive = data.result.includes('Positive');
+
+                document.getElementById('resultMovie').textContent     = movieName ? `🎬 ${movieName}` : '';
+                document.getElementById('resultEmoji').textContent     = isPositive ? '😊' : '😞';
+                document.getElementById('resultLabel').textContent     = data.result;
+                document.getElementById('resultConfidence').textContent = `Confidence: ${data.confidence}%`;
+
+                animateBar(data.confidence, isPositive);
+                resultCard.classList.add('show', isPositive ? 'positive' : 'negative');
+
+                // Add to history
+                reviewHistory.unshift({
+                    movie:      movieName || '—',
+                    text:       text.length > 60 ? text.substring(0, 60) + '...' : text,
+                    result:     data.result,
+                    confidence: data.confidence,
+                    isPositive
+                });
+                if (reviewHistory.length > 5) reviewHistory.pop();
+                renderHistory();
+
+            } catch (err) {
+                alert('Error connecting to server. Make sure Flask is running!');
+            }
+
+            btn.querySelector('.btn-text').style.display   = 'inline';
+            btn.querySelector('.btn-loader').style.display = 'none';
+            btn.disabled = false;
+        }
+
+        textarea.addEventListener('keydown', e => {
+            if (e.ctrlKey && e.key === 'Enter') analyzeSentiment();
+        });
+    </script>
+
+</body>
+</html>
